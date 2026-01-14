@@ -1,59 +1,66 @@
-import math
+import numpy as np
 
-class Value:
-    """ stores a single scalar value and its gradient """
+class Tensor:
+    """ stores a numpy array and its gradient """
 
     def __init__(self, data, _children=(), _op=''):
-        self.data = data
-        self.grad = 0
-        # internal variables used for autograd graph construction
+        self.data = np.array(data, dtype=np.float32)
+        self.grad = np.zeros_like(self.data)
         self._backward = lambda: None
         self._prev = set(_children)
-        self._op = _op # the op that produced this node, for graphviz / debugging / etc
+        self._op = _op 
 
     def __add__(self, other):
-        other = other if isinstance(other, Value) else Value(other)
-        out = Value(self.data + other.data, (self, other), '+')
+        other = other if isinstance(other, Tensor) else Tensor(other)
+        out = Tensor(self.data + other.data, (self, other), '+')
 
         def _backward():
-            self.grad += out.grad
-            other.grad += out.grad
+            self.grad += unbroadcast(out.grad, self.data.shape)
+            other.grad += unbroadcast(out.grad, other.data.shape)
         out._backward = _backward
 
         return out
 
     def __mul__(self, other):
-        other = other if isinstance(other, Value) else Value(other)
-        out = Value(self.data * other.data, (self, other), '*')
+        other = other if isinstance(other, Tensor) else Tensor(other)
+        out = Tensor(self.data * other.data, (self, other), '*')
 
         def _backward():
-            self.grad += other.data * out.grad
-            other.grad += self.data * out.grad
+            self.grad += unbroadcast(other.data * out.grad, self.data.shape)
+            other.grad += unbroadcast(self.data * out.grad, other.data.shape)
         out._backward = _backward
 
         return out
 
-    def __pow__(self, other):
-        assert isinstance(other, (int, float)), "only supporting int/float powers for now"
-        out = Value(self.data**other, (self,), f'**{other}')
+    def __matmul__(self, other):
+        # Matrix multiplication (X @ W)
+        other = other if isinstance(other, Tensor) else Tensor(other)
+        out = Tensor(self.data @ other.data, (self, other), '@')
 
         def _backward():
-            self.grad += (other * self.data**(other-1)) * out.grad
+            # Gradients for matrix multiplication (transpose logic)
+            self.grad += out.grad @ other.data.T
+            other.grad += self.data.T @ out.grad
         out._backward = _backward
 
         return out
 
-    def log(self):
-        x = self.data
-        out = Value(math.log(x), (self,), 'log')
-
+    def sum(self, axis=None, keepdims=False):
+        # Sum elements (needed to reduce Loss tensor to a single scalar)
+        out = Tensor(self.data.sum(axis=axis, keepdims=keepdims), (self,), 'sum')
+        
         def _backward():
-            self.grad += (1 / x) * out.grad
+            grad_output = out.grad
+            if axis is not None and not keepdims:
+                grad_output = np.expand_dims(out.grad, axis)
+            
+            self.grad += grad_output * np.ones_like(self.data)
         out._backward = _backward
-
+        
         return out
+
     def relu(self):
-        out = Value(0 if self.data < 0 else self.data, (self,), 'ReLU')
+        out = Tensor(np.maximum(0, self.data), (self,), 'ReLU')
 
         def _backward():
             self.grad += (out.data > 0) * out.grad
@@ -63,8 +70,8 @@ class Value:
 
     def tanh(self):
         x = self.data
-        t = (math.exp(2*x) - 1)/(math.exp(2*x) + 1)
-        out = Value(t, (self,), 'tanh')
+        t = (np.exp(2*x) - 1)/(np.exp(2*x) + 1)
+        out = Tensor(t, (self,), 'tanh')
         
         def _backward():
             self.grad += (1 - t**2) * out.grad
@@ -74,17 +81,26 @@ class Value:
 
     def sigmoid(self):
         x = self.data
-        t = 1 / (1 + math.exp(-x))
-        out = Value(t, (self,), 'sigmoid')
+        t = 1 / (1 + np.exp(-x))
+        out = Tensor(t, (self,), 'sigmoid')
         
         def _backward():
             self.grad += (t * (1 - t)) * out.grad
         out._backward = _backward
         
         return out
+    
+    def log(self):
+        x = self.data
+        out = Tensor(np.log(x + 1e-15), (self,), 'log')
+        
+        def _backward():
+            self.grad += (1 / (x + 1e-15)) * out.grad
+        out._backward = _backward
+        
+        return out
 
     def backward(self):
-
         # topological order all of the children in the graph
         topo = []
         visited = set()
@@ -96,31 +112,34 @@ class Value:
                 topo.append(v)
         build_topo(self)
 
-        # go one variable at a time and apply the chain rule to get its gradient
-        self.grad = 1
+        self.grad = np.ones_like(self.data)
         for v in reversed(topo):
             v._backward()
 
-    def __neg__(self): # -self
-        return self * -1
-
-    def __radd__(self, other): # other + self
-        return self + other
-
-    def __sub__(self, other): # self - other
-        return self + (-other)
-
-    def __rsub__(self, other): # other - self
-        return other + (-self)
-
-    def __rmul__(self, other): # other * self
-        return self * other
-
-    def __truediv__(self, other): # self / other
-        return self * other**-1
-
-    def __rtruediv__(self, other): # other / self
-        return other * self**-1
+    def __neg__(self): return self * -1
+    def __radd__(self, other): return self + other
+    def __sub__(self, other): return self + (-other)
+    def __rsub__(self, other): return other + (-self)
+    def __rmul__(self, other): return self * other
+    def __truediv__(self, other): return self * other**-1
+    def __rtruediv__(self, other): return other * self**-1
+    
+    def __pow__(self, other):
+        assert isinstance(other, (int, float)), "only supporting int/float powers"
+        out = Tensor(self.data**other, (self,), f'**{other}')
+        def _backward():
+            self.grad += (other * self.data**(other-1)) * out.grad
+        out._backward = _backward
+        return out
 
     def __repr__(self):
-        return f"Value(data={self.data}, grad={self.grad})"
+        return f"Tensor(data={self.data.shape}, grad={self.grad.shape})"
+
+def unbroadcast(grad, shape):
+    ndims_added = grad.ndim - len(shape)
+    for _ in range(ndims_added):
+        grad = grad.sum(axis=0)
+    for i, dim in enumerate(shape):
+        if dim == 1:
+            grad = grad.sum(axis=i, keepdims=True)
+    return grad
