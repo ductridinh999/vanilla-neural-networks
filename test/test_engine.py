@@ -65,3 +65,35 @@ def test_more_ops():
     # backward pass went well
     assert abs(amg.grad - apt.grad.item()) < tol
     assert abs(bmg.grad - bpt.grad.item()) < tol
+
+def test_activations():
+    # Test tanh
+    a = Value(-0.5)
+    b = a.tanh()
+    b.backward()
+    amg, bmg = a, b
+
+    a = torch.Tensor([-0.5]).double()
+    a.requires_grad = True
+    b = torch.tanh(a)
+    b.backward()
+    apt, bpt = a, b
+
+    tol = 1e-6
+    assert abs(bmg.data - bpt.data.item()) < tol
+    assert abs(amg.grad - apt.grad.item()) < tol
+
+    # Test sigmoid
+    a = Value(0.8)
+    b = a.sigmoid()
+    b.backward()
+    amg, bmg = a, b
+
+    a = torch.Tensor([0.8]).double()
+    a.requires_grad = True
+    b = torch.sigmoid(a)
+    b.backward()
+    apt, bpt = a, b
+
+    assert abs(bmg.data - bpt.data.item()) < tol
+    assert abs(amg.grad - apt.grad.item()) < tol
