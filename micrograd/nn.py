@@ -12,14 +12,25 @@ class Module:
 
 class Neuron(Module):
 
-    def __init__(self, nin, nonlin=True):
+    def __init__(self, nin, nonlin=True, activation='relu'):
         self.w = [Value(random.uniform(-1,1)) for _ in range(nin)]
         self.b = Value(0)
         self.nonlin = nonlin
+        self.activation = activation 
 
     def __call__(self, x):
         act = sum((wi*xi for wi,xi in zip(self.w, x)), self.b)
-        return act.relu() if self.nonlin else act
+        if not self.nonlin:
+            return act
+        
+        if self.activation == 'relu':
+            return act.relu()
+        elif self.activation == 'tanh':
+            return act.tanh()
+        elif self.activation == 'sigmoid':
+            return act.sigmoid()
+        else:
+            return act
 
     def parameters(self):
         return self.w + [self.b]
