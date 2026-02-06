@@ -10,6 +10,19 @@ class Module:
     def parameters(self):
         return []
 
+    def train(self, mode=True):
+        self.training = mode
+        for p in self.__dict__.values():
+            if isinstance(p, Module):
+                p.train(mode)
+            elif isinstance(p, list):
+                for item in p:
+                    if isinstance(item, Module):
+                        item.train(mode)
+
+    def eval(self):
+        self.train(False)
+
 class Linear(Module):
 
     def __init__(self, nin, nout, bias=True):
@@ -45,7 +58,46 @@ class Sigmoid(Module):
     def __call__(self, x): return x.sigmoid()
     def __repr__(self): return "Sigmoid()"
 
-# --- Containers ---
+class LeakyReLU(Module):
+    def __init__(self, alpha=0.01):
+        self.alpha = alpha
+    def __call__(self, x): return x.leaky_relu(self.alpha)
+    def __repr__(self): return f"LeakyReLU({self.alpha})"
+
+class GELU(Module):
+    def __call__(self, x): return x.gelu()
+    def __repr__(self): return "GELU()"
+
+class BatchNorm1d(Module):
+    def __init__(self, dim, eps=1e-5, momentum=0.1):
+        self.eps = eps
+        self.momentum = momentum
+        self.training = True
+        self.gamma = Tensor(np.ones(dim))
+        self.beta = Tensor(np.zeros(dim))
+        self.running_mean = np.zeros(dim)
+        self.running_var = np.ones(dim)
+
+    def __call__(self, x):
+        if self.training:
+            batch_mean = x.mean(axis=0)
+            batch_var = x.var(axis=0)
+            
+            # Update running stats
+            self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * batch_mean.data
+            self.running_var = (1 - self.momentum) * self.running_var + self.momentum * batch_var.data
+            
+            x_hat = (x - batch_mean) * (batch_var + self.eps)**-0.5
+        else:
+            x_hat = (x - Tensor(self.running_mean)) * (Tensor(self.running_var) + self.eps)**-0.5
+            
+        return self.gamma * x_hat + self.beta
+
+    def parameters(self):
+        return [self.gamma, self.beta]
+
+    def __repr__(self):
+        return f"BatchNorm1d({self.gamma.data.shape[0]}, eps={self.eps}, momentum={self.momentum})"
 
 class MLP(Module):
 
@@ -63,6 +115,10 @@ class MLP(Module):
                     self.layers.append(Tanh())
                 elif activation == 'sigmoid':
                     self.layers.append(Sigmoid())
+                elif activation == 'leaky_relu':
+                    self.layers.append(LeakyReLU())
+                elif activation == 'gelu':
+                    self.layers.append(GELU())
                 else:
                     raise ValueError(f"Unknown activation: {activation}")
 

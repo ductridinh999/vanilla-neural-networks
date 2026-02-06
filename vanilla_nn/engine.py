@@ -89,6 +89,58 @@ class Tensor:
         out._backward = _backward
         
         return out
+
+    def leaky_relu(self, alpha=0.01):
+        out = Tensor(np.where(self.data > 0, self.data, self.data * alpha), (self,), f'LeakyReLU({alpha})')
+        
+        def _backward():
+            self.grad += np.where(self.data > 0, 1, alpha) * out.grad
+        out._backward = _backward
+        
+        return out
+
+    def gelu(self):
+        x = self
+        const_1 = np.sqrt(2/np.pi)
+        tanh_arg = (x + 0.044715 * x**3) * const_1
+        return 0.5 * x * (1 + tanh_arg.tanh())
+
+    def mean(self, axis=None, keepdims=False):
+        out_sum = self.sum(axis=axis, keepdims=keepdims)
+        
+        if axis is None:
+            n = self.data.size
+        elif isinstance(axis, int):
+            n = self.data.shape[axis]
+        elif isinstance(axis, tuple):
+            n = np.prod([self.data.shape[i] for i in axis])
+        else:
+            n = 1 # Should not happen with valid axis
+            
+        return out_sum * (1.0 / n)
+
+    def var(self, axis=None, keepdims=False, ddof=0):
+        # var = mean((x - mean)**2)
+        # keepdims=True for broadcasting
+        m = self.mean(axis=axis, keepdims=True)
+        diff = self - m
+        sq_diff = diff**2
+        
+        # Calculate n (divisor)
+        if axis is None:
+            n = self.data.size
+        elif isinstance(axis, int):
+            n = self.data.shape[axis]
+        elif isinstance(axis, tuple):
+            n = np.prod([self.data.shape[i] for i in axis])
+        else:
+            n = 1
+
+        divisor = n - ddof
+        if divisor <= 0:
+            raise ValueError(f"Divisor is <= 0: n={n}, ddof={ddof}")
+            
+        return sq_diff.sum(axis=axis, keepdims=keepdims) * (1.0 / divisor)
     
     def log(self):
         x = self.data
