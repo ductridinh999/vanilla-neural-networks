@@ -152,6 +152,53 @@ class Tensor:
         
         return out
 
+    def reshape(self, *shape):
+        if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
+            shape = shape[0]
+        out = Tensor(self.data.reshape(shape), (self,), 'reshape')
+        
+        def _backward():
+            self.grad += out.grad.reshape(self.data.shape)
+        out._backward = _backward
+        
+        return out
+
+    def transpose(self, *axes):
+        if len(axes) == 1 and isinstance(axes[0], (tuple, list)):
+            axes = axes[0]
+        elif len(axes) == 0:
+            axes = None
+        
+        out = Tensor(self.data.transpose(axes), (self,), 'transpose')
+        
+        def _backward():
+            if axes is None:
+                self.grad += out.grad.transpose()
+            else:
+                # Inverse permutation
+                inv_axes = np.argsort(axes)
+                self.grad += out.grad.transpose(inv_axes)
+        out._backward = _backward
+        
+        return out
+
+    def im2col(self, kernel_size, stride=1, padding=0):
+        from .functional import im2col_indices, col2im_indices
+        
+        cols = im2col_indices(self.data, kernel_size, kernel_size, padding=padding, stride=stride)
+        out = Tensor(cols, (self,), 'im2col')
+        
+        def _backward():
+            grad_x = col2im_indices(out.grad, self.data.shape, kernel_size, kernel_size, padding=padding, stride=stride)
+            self.grad += grad_x
+        out._backward = _backward
+        
+        return out
+    
+    @property
+    def shape(self):
+        return self.data.shape
+
     def backward(self):
         # topological order all of the children in the graph
         topo = []
